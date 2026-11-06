@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <PackageId>HamContest</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Description>Contest logging and a documented subset of N1MM UDC/SEC definitions, independent of UI, radio and decoder.</Description>
+    <RepositoryUrl>https://github.com/Eugen68/HamContest</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>ham;amateur-radio;contest;logging;udc;rtty</PackageTags>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <None Include="../../docs/udc-support.md" Pack="true" PackagePath="docs/" />
+  </ItemGroup>
+</Project>

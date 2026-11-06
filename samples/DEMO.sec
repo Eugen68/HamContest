@@ -1,0 +1,5 @@
+; Original example, using N1MM's simple section-list layout.
+Type=DEMO SubType=
+BU
+CJ
+DX
