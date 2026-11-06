@@ -11,5 +11,6 @@
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
     <None Include="../../docs/udc-support.md" Pack="true" PackagePath="docs/" />
+    <None Include="../../docs/reference-validation.md" Pack="true" PackagePath="docs/" />
   </ItemGroup>
 </Project>

@@ -154,4 +154,20 @@ public class ExtendedUdcTests
     {
         Assert.False(UdcImporter.Import(Fixtures.Definition((key, value))).CanScore);
     }
+
+    [Fact]
+    public void UnknownSectionInFilterIsRejectedAtImport()
+    {
+        var imported = UdcImporter.Import(Fixtures.Definition(("NumMults", "1"), ("IsMultPer", "4"), ("MultSqlString", "CallSign"),
+            ("MultWindowType", "DEMO"), ("CountMultOnlyForSec", "TYPO")), [SectionList.Parse("Type=DEMO SubType=\nBU\nCJ")]);
+        Assert.False(imported.CanScore);
+        Assert.Contains(imported.Diagnostics, d => d.Key == "CountMultOnlyForSec" && d.Severity == DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void BandFactorOverflowIsAnErrorInsteadOfWrappedPoints()
+    {
+        var rules = Fixtures.Rules(("PointsMultByBand", "14,2147483647"));
+        Assert.Throws<OverflowException>(() => rules.Score([Fixtures.Contact()], Fixtures.Own));
+    }
 }
