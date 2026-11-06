@@ -14,7 +14,9 @@ public sealed record UdcImportResult(UdcDocument Document, ImmutableArray<Import
 }
 
 internal sealed record PointRule(string Selector, int Points, int Priority);
-internal sealed record MultiplierRule(int Group, string Selector, MultiplierScope Scope, bool ExcludeOwn);
+internal sealed record MultiplierRule(int Group, string Selector, MultiplierScope Scope, bool ExcludeOwn,
+    ImmutableArray<string> IncludeCountries, ImmutableArray<string> ExcludeCountriesOrContinents,
+    ImmutableArray<string> IncludeSections, bool CountsForScore);
 internal sealed record ExchangeCheck(string Field, string Kind, bool Required, string? SectionType = null);
 public sealed record CabrilloField(string Name, int Width);
 
@@ -52,6 +54,14 @@ public static class UdcImporter
             if (bool.TryParse(value, out bool result)) return result;
             Error(key, $"{key}: expected True or False."); return fallback;
         }
+        ImmutableArray<string> Filter(string key)
+        {
+            string value = Get(key);
+            if (value.Length == 0) return [];
+            var values = Split(value).Select(Values.Key).ToImmutableArray();
+            if (values.Any(v => !Regex.IsMatch(v, "^[A-Z0-9_-]{1,15}$"))) Error(key, $"{key}: expected a comma-separated list of exact identifiers.");
+            return values;
+        }
         string name = Get("Name");
         if (!Regex.IsMatch(name, "^[A-Za-z0-9_-]{1,10}$")) Error("Name", "Name must contain 1..10 ASCII letters/digits/underscores/hyphens.");
         if (name.StartsWith("VHF", StringComparison.OrdinalIgnoreCase)) Error("Name", "VHF distance scoring is not supported in this version.");
@@ -85,6 +95,21 @@ public static class UdcImporter
             if (pointRules.Select(p => p.Priority >= 3 ? p.Priority : 2).Distinct().Count() > 1)
                 Error("PointsPerContact", "Mixed band/mode/geography points tables are not supported yet.");
         }
+        var bandFactors = ImmutableDictionary.CreateBuilder<string, int>();
+        string bandFactorText = Get("PointsMultByBand");
+        if (bandFactorText.Length != 0)
+        {
+            string[] tokens = Split(bandFactorText);
+            if (tokens.Length % 2 != 0) Error("PointsMultByBand", "Expected band MHz, integer factor pairs.");
+            for (int i = 0; i + 1 < tokens.Length; i += 2)
+            {
+                string? band = decimal.TryParse(tokens[i], NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal mhz)
+                    ? mhz switch { 1.8m => "160m", 3.5m => "80m", 7m => "40m", 14m => "20m", 21m => "15m", 28m => "10m", _ => null } : null;
+                if (band == null || !int.TryParse(tokens[i + 1], NumberStyles.None, CultureInfo.InvariantCulture, out int factor) || factor < 0)
+                    Error("PointsMultByBand", $"Unsupported band/factor '{tokens[i]}, {tokens[i + 1]}'.");
+                else if (!bandFactors.TryAdd(band, factor)) Error("PointsMultByBand", $"Repeated factor for {band}.");
+            }
+        }
         int numMults = Number("NumMults", 1, 0, 3);
         var globalScope = (MultiplierScope)Number("IsMultPer", 0, 0, 4);
         var multipliers = ImmutableArray.CreateBuilder<MultiplierRule>();
@@ -96,18 +121,22 @@ public static class UdcImporter
             string selector = Values.Key(Get("MultSqlString" + suffix, "N/A"));
             var scope = (MultiplierScope)Number($"IsMult{group}Per", (int)globalScope, 0, 4);
             bool exclude = Boolean("DoNotCountMeAsMult" + suffix);
+            var includeCountries = Filter("CountMultOnlyFor" + suffix);
+            var excludeCountries = Filter("DoNotCountMultOnlyFor" + suffix);
+            var includeSections = Filter("CountMultOnlyForSec" + suffix);
+            bool countsForScore = Number("MultMult" + suffix, 1, 0, 1) == 1;
             if (group > numMults || scope == MultiplierScope.None) continue;
             if (selector == "N/A")
             {
                 if (!label.Equals("N/A", StringComparison.OrdinalIgnoreCase)) Error("MultSqlString" + suffix, "Multiplier selector is required; it cannot be inferred from a display label.");
                 continue;
             }
-            if (selector is not ("COUNTRYPREFIX" or "WPXPREFIX" or "SECTION" or "CQZONE" or "IARUZONE" or "EXCHANGE" or "MISC" or "GRID" or "SGRID" or "FIELD"))
+            if (selector is not ("COUNTRYPREFIX" or "WPXPREFIX" or "SECTION" or "CQZONE" or "IARUZONE" or "EXCHANGE" or "MISC" or "GRID" or "SGRID" or "FIELD" or "CALLSIGN" or "FIRSTQSO"))
                 Error("MultSqlString" + suffix, $"Unsupported multiplier selector '{selector}'.");
-            else multipliers.Add(new(group, selector, scope, exclude));
-            if (exclude && selector is "EXCHANGE" or "MISC") Error("DoNotCountMeAsMult" + suffix, "Own-exchange exclusion is not supported.");
+            else multipliers.Add(new(group, selector, scope, exclude, includeCountries, excludeCountries, includeSections, countsForScore));
+            if (exclude && selector is "EXCHANGE" or "MISC" or "FIRSTQSO") Error("DoNotCountMeAsMult" + suffix, "Own-exchange/FirstQSO exclusion is not supported.");
         }
-        bool hasSections = multipliers.Any(m => m.Selector == "SECTION");
+        bool hasSections = multipliers.Any(m => m.Selector == "SECTION" || !m.IncludeSections.IsEmpty);
         var checks = ImmutableArray.CreateBuilder<ExchangeCheck>();
         string validation = Get("QsoErrorString");
         foreach (string clause in Split(validation).Where(s => s.Length != 0))
@@ -129,6 +158,10 @@ public static class UdcImporter
             }
         }
         if (hasSections && !lists.Any(s => s.Type.Equals(sectionType, StringComparison.OrdinalIgnoreCase))) Error("MultWindowType", $"Missing SEC list with Type={sectionType}.");
+        if (lists.FirstOrDefault(s => s.Type.Equals(sectionType, StringComparison.OrdinalIgnoreCase)) is { } filterSections)
+            foreach (var multiplier in multipliers)
+                if (multiplier.IncludeSections.Any(s => !filterSections.Contains(s)))
+                    Error("CountMultOnlyForSec" + (multiplier.Group == 1 ? "" : multiplier.Group.ToString(CultureInfo.InvariantCulture)), "Section filter contains a code absent from the supplied SEC list.");
         string entryWindow = Get("EntryWindowInfo");
         var entryFields = ParseFields(entryWindow, ["SNTText", "RCVText", "NameText", "CommentText", "SntNrText", "RcvNrText", "Exchange1Text", "GridSquareText", "MiscText", "SectText"],
             message => Error("EntryWindowInfo", message), 10000);
@@ -141,17 +174,24 @@ public static class UdcImporter
         if (!canExport) diagnostics.Add(new(DiagnosticSeverity.Warning, "CabrilloUnsupported", "This version exports only explicit CabrilloFormat=99 templates; scoring is independent of export support."));
 
         // These fields are descriptive and exposed through Document, without affecting scoring.
-        foreach (string key in new[] { "FrameText", "LogInfo", "ScoreSummaryMultNames", "SpecialInstructions", "WebAddress", "GenericPrintString", "GenericPrintStringHeader", "Period", "StartOfContest", "EndOfContest", "MinimumOffTime" }) Get(key);
+        foreach (string key in new[] { "FrameText", "LogInfo", "ScoreSummaryMultNames", "SpecialInstructions", "WebAddress", "GenericPrintString", "GenericPrintStringHeader", "Period", "StartOfContest", "EndOfContest", "MinimumOffTime", "OverlayCategory" }) Get(key);
         // Recognized parameters whose neutral setting is supported. Active versions must not be ignored.
-        foreach (string key in new[] { "UsesWAECountries", "CQZoneMultContest", "DigitalModeSqlString", "SetSentTimeForContact", "UsesLASTEXCHmacro", "SelfSpotAllowed" })
+        bool waeCountries = Boolean("UsesWAECountries");
+        foreach (string key in new[] { "CQZoneMultContest", "DigitalModeSqlString", "SetSentTimeForContact", "UsesLASTEXCHmacro", "SelfSpotAllowed" })
             if (Boolean(key)) Error(key, $"{key}=True is not supported yet.");
         if (Number("QsoNumbersByBand", 0, 0, 2) != 0) Error("QsoNumbersByBand", "Only a single serial sequence is supported.");
-        if (Number("DupeSqlString", 0, 0, 4) != 0) Error("DupeSqlString", "Additional dupe clauses are not supported yet.");
-        if (!Get("IsWorkable", "Any").Equals("Any", StringComparison.OrdinalIgnoreCase)) Error("IsWorkable", "Only IsWorkable=Any is supported.");
+        int dupeClause = Number("DupeSqlString", 0, 0, 4);
+        string workable = Values.Key(Get("IsWorkable", "Any"));
+        if (workable is not ("ANY" or "MYCOUNTRYONLY" or "EXCEPTMYCOUNTRY" or "MYCONTINENTONLY" or "NAONLY" or "SAONLY" or "EUONLY" or "ASIAONLY" or "AFONLY" or "OCONLY"))
+        {
+            if (Split(workable).Any(s => !Regex.IsMatch(s, "^[A-Z]{1,3}[0-9]?$"))) Error("IsWorkable", "Unknown eligibility rule or invalid CTY country list.");
+        }
+        foreach (string key in new[] { "ResetMultsEverySession", "ResetSNEverySession" })
+            if (Number(key, 0, 0, 1) != 0) Error(key, "Session resets are not supported yet.");
         if (Number("MultiplierBands", 1, 1, 4) != 1) Error("MultiplierBands", "Only HF contest bands are supported.");
         Boolean("ShowMyCountryStations", true); Boolean("ShowWarcBands");
         string zoneType = Get("ZoneType", "CQ");
-        if (zoneType is not ("CQ" or "IARU")) Error("ZoneType", "ZoneType must be CQ or IARU.");
+        if (Values.Key(zoneType) is not ("CQ" or "IARU")) Error("ZoneType", "ZoneType must be CQ or IARU.");
         foreach (var entry in document.Entries)
         {
             bool metadata = entry.Section.Equals("Author", StringComparison.OrdinalIgnoreCase) || entry.Section.Equals("File", StringComparison.OrdinalIgnoreCase);
@@ -166,9 +206,10 @@ public static class UdcImporter
             string canonical = string.Join("\n", document.Entries.OrderBy(e => e.Section, StringComparer.OrdinalIgnoreCase).ThenBy(e => e.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(e => Values.Key(e.Section) + "/" + Values.Key(e.Key) + "=" + e.Value));
             canonical += "\n" + string.Join("\n", lists.OrderBy(s => s.Type, StringComparer.OrdinalIgnoreCase).Select(s => s.Fingerprint));
-            string fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("HamContest-UDC-v1\n" + canonical)));
+            string fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("HamContest-UDC-v2\n" + canonical)));
             rules = new(name, displayName, cabrilloName, fingerprint, mode, dupe, serials, exchange, defaultPoints,
-                pointRules.ToImmutable(), multipliers.ToImmutable(), checks.ToImmutable(), lists, sectionType, entryFields, canExport ? cabrillo : []);
+                pointRules.ToImmutable(), multipliers.ToImmutable(), checks.ToImmutable(), lists, sectionType, entryFields, canExport ? cabrillo : [], dupeClause, workable,
+                bandFactors.ToImmutable(), waeCountries ? CountryIdentityKind.Wae : CountryIdentityKind.Dxcc);
         }
         return new(document, diagnostics.ToImmutable(), rules);
     }

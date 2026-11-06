@@ -1,6 +1,6 @@
 # Compatibilitate UDC / SEC — versiunea initiala
 
-Acest document defineste comportamentul acceptat de HamContest 0.1.0-preview.1.
+Acest document defineste comportamentul acceptat de HamContest 0.1.0-preview.2.
 Sursa formatului: [manualul UDC N1MM Logger+](https://n1mmwp.hamdocs.com/appendices/udc-editor/).
 Nu este o promisiune de compatibilitate cu fiecare functie sau versiune N1MM.
 
@@ -24,10 +24,15 @@ Nu este o promisiune de compatibilitate cu fiecare functie sau versiune N1MM.
 | DupeType | 1 concurs, 2 banda, 3 banda/mod, 4 fara verificare |
 | DefaultContestExchange | `001` ca primul cuvant activeaza serialele; alt schimb este fix; expresiile Last… sunt refuzate |
 | PointsPerContact | Intreg constant sau perechi selector/puncte, descrise mai jos |
+| PointsMultByBand | Perechi banda in MHz/factor intreg nenegativ, pentru cele sase benzi HF de concurs |
+| CountMultOnlyFor/2/3 | Include multiplicatorul numai pentru tari CTY exacte |
+| DoNotCountMultOnlyFor/2/3 | Exclude multiplicatorul pentru tari CTY sau continente exacte |
+| CountMultOnlyForSec/2/3 | Include numai sectiunile indicate; necesita lista SEC si coduri valide |
+| MultMult/2/3 | 1 contribuie la scor, 0 pastreaza multiplicatorul numai pentru afisare |
 | NumMults | 0–3; implicit 1 |
 | IsMultPer, IsMult1Per/2Per/3Per | 0 fara, 1 banda, 2 mod, 3 banda/mod, 4 concurs |
 | Multiplier1Name/2Name/3Name | Etichete; selectorul nu este dedus din eticheta |
-| MultSqlString/2/3 | CountryPrefix, WPXPrefix, Section, CQZONE, IARUZONE, Exchange, Misc, Grid, SGrid, FIELD, N/A |
+| MultSqlString/2/3 | CountryPrefix, WPXPrefix, Section, CQZONE, IARUZONE, Exchange, Misc, Grid, SGrid, FIELD, CallSign, FirstQSO, N/A |
 | DoNotCountMeAsMult/2/3 | Excludere a valorii proprii, in afara Exchange/Misc |
 | MultWindowType | Alege lista SEC dupa Type; lista trebuie furnizata pentru multiplicator Section |
 | QsoErrorString | Any/Numeric cu _not_Empty, Grid, nume lista SEC cu optional _or_Empty; poate avea prefixe de camp si mai multe clauze |
@@ -35,12 +40,14 @@ Nu este o promisiune de compatibilitate cu fiecare functie sau versiune N1MM.
 | CabrilloVersion | 3.0 |
 | CabrilloFormat | Export doar 99 cu CabrilloString valid; celelalte formate sunt raportate ca indisponibile |
 | CabrilloString | Campuri SNT, SentNr, CallSign, RCV, RcvNr, Comment, GridSquare, Exchange1, Name, SentExch, SentExchPart1/2/3, Space |
-| QsoNumbersByBand, DupeSqlString | Numai valoarea neutra 0 |
-| IsWorkable | Numai Any |
+| QsoNumbersByBand | Numai valoarea neutra 0 |
+| DupeSqlString | 0 fara criteriu suplimentar, 1 sectiune, 2 schimb, 3 mod, 4 locator |
+| IsWorkable | Any, MyCountryOnly, ExceptMyCountry, MyContinentOnly, NAonly/SAonly/EUonly/ASIAonly/AFonly/OConly sau lista exacta de tari CTY |
 | MultiplierBands | Numai 1: cele sase benzi HF de concurs |
-| UsesWAECountries, CQZoneMultContest, DigitalModeSqlString, SetSentTimeForContact, UsesLASTEXCHmacro, SelfSpotAllowed | Numai False/necompletat |
+| UsesWAECountries | True cere identitati WAE declarate de gazda; False cere DXCC |
+| CQZoneMultContest, DigitalModeSqlString, SetSentTimeForContact, UsesLASTEXCHmacro, SelfSpotAllowed | Numai False/necompletat |
 | ShowMyCountryStations, ShowWarcBands, ZoneType | Citite pentru gazda; nu extind benzile acceptate |
-| FrameText, LogInfo, ScoreSummaryMultNames, SpecialInstructions, WebAddress, GenericPrintString/Header, Period, StartOfContest, EndOfContest, MinimumOffTime | Metadate pastrate; nu exista motor de timpi OFF sau randare N1MM |
+| FrameText, LogInfo, ScoreSummaryMultNames, SpecialInstructions, WebAddress, GenericPrintString/Header, Period, StartOfContest, EndOfContest, MinimumOffTime, OverlayCategory | Metadate pastrate; nu exista motor de timpi OFF sau randare N1MM |
 
 Valorile implicite implementate: Mode=CW, DupeType=2, PointsPerContact=1, NumMults=1,
 IsMultPer=0, DefaultContestExchange=001, CabrilloFormat=1 (export indisponibil).
@@ -111,3 +118,29 @@ parser/BOM/duplicate, SEC, reguli refuzate, duble, multiplicatori, geografie, re
 restart, editare/stergere, UTC, inlocuirea fisierului si Cabrillo fara pierderi de campuri.
 Nu a fost executata compararea automata cu N1MM Logger+. Pentru extinderea compatibilitatii,
 pastram UDC-ul de referinta si un jurnal mic cu rezultate asteptate verificate independent.
+
+## Extensii preview.2
+
+`PointsMultByBand=1.8,2,3.5,2,7,2` dubleaza punctele de baza pe 160/80/40m; benzile
+neenumerate folosesc factorul 1. Factorii se aplica dupa alegerea punctelor de baza si nu
+acorda puncte dublelor. Tabelele cu benzi repetate, benzi nesuportate sau factori negativi
+sunt refuzate; depasirea numerica produce eroare, fara invelirea valorii.
+
+Filtrele de multiplicatori sunt independente pe grupe. Include tara si include sectiunea
+se combina prin AND; excluderea tarii/continentului are prioritate. Tari ca G si GJ nu se
+confunda prin potrivire de prefix. Un QSO fara multiplicator eligibil isi pastreaza punctele.
+Lipsa datelor necesare filtrului produce eroare de validare.
+
+CallSign foloseste indicativul complet normalizat al corespondentului din model, independent
+de Misc. FirstQSO crediteaza prima legatura din fiecare domeniu IsMultPer. Grupele MultMult=0
+apar in `Multipliers` si creditele individuale, dar nu in `ScoringMultipliers`; cand nu exista
+grupe care contribuie la scor, totalul este suma punctelor QSO.
+
+DupeSqlString adauga cheia specificata la combinatia DupeType. Sectiunea foloseste Received.Section
+sau Received.Value; locatorul complet este normalizat si trebuie sa fie valid. Cu DupeType=4
+verificarea ramane dezactivata. IsWorkable produce eroare de validare pentru o statie neeligibila;
+jurnalul nu accepta automat un QSO invalid doar pentru a-i acorda zero puncte.
+
+Fisierele cu markeri literali ca `1*`, selectori necunoscuti (de exemplu YBCallsign), bonusuri
+active sau sesiuni multiple raman refuzate. Nu interpretam aproximativ o functie doar pentru
+a putea importa mai multe fisiere. Vezi [verificarea definitiilor reale](reference-validation.md).

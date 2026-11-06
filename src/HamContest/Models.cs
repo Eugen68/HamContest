@@ -6,11 +6,13 @@ namespace HamContest;
 public enum ContactMode { CW, SSB, RTTY, PSK, FM, AM }
 public enum DupeScope { Contest = 1, Band = 2, BandAndMode = 3, None = 4 }
 public enum MultiplierScope { None, Band, Mode, BandAndMode, Contest }
+public enum CountryIdentityKind { Dxcc, Wae }
 
 /// <summary>Country and prefix identifiers are supplied by the host, e.g. from HamCallsign.</summary>
 public sealed record StationInfo(string Callsign)
 {
     public string CountryPrefix { get; init; } = "";
+    public CountryIdentityKind CountryIdentityKind { get; init; } = CountryIdentityKind.Dxcc;
     public string Continent { get; init; } = "";
     public int? CqZone { get; init; }
     public int? ItuZone { get; init; }
@@ -59,9 +61,15 @@ public static class Bands
 }
 
 public sealed record ValidationIssue(string Field, string Message);
-public sealed record MultiplierCredit(int Group, string Key);
+public sealed record MultiplierCredit(int Group, string Key)
+{
+    public bool CountsForScore { get; init; } = true;
+}
 public sealed record QsoEvaluation(Qso Qso, bool IsDupe, int Points, ImmutableArray<MultiplierCredit> NewMultipliers);
-public sealed record ContestScore(long QsoPoints, int Multipliers, long Total, ImmutableArray<QsoEvaluation> Contacts);
+public sealed record ContestScore(long QsoPoints, int Multipliers, long Total, ImmutableArray<QsoEvaluation> Contacts)
+{
+    public int ScoringMultipliers { get; init; }
+}
 
 /// <summary>Rules may come from UDC or a host implementation. DefinitionId must change when rules change.</summary>
 public interface IContestRules

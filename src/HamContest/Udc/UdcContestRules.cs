@@ -15,22 +15,29 @@ public sealed class UdcContestRules : IContestRules
     public ImmutableArray<CabrilloField> EntryFields { get; }
     public ImmutableArray<CabrilloField> CabrilloFields { get; }
     public bool CanExportCabrillo => !CabrilloFields.IsEmpty;
+    public CountryIdentityKind RequiredCountryIdentityKind { get; }
     private readonly string _mode, _sectionType;
     private readonly int _defaultPoints;
     private readonly ImmutableArray<PointRule> _points;
     private readonly ImmutableArray<MultiplierRule> _multipliers;
     private readonly ImmutableArray<ExchangeCheck> _checks;
     private readonly ImmutableArray<SectionList> _sections;
+    private readonly int _dupeClause;
+    private readonly string _workable;
+    private readonly ImmutableDictionary<string, int> _bandFactors;
 
     internal UdcContestRules(string name, string displayName, string cabrilloName, string fingerprint, string mode,
         DupeScope dupe, bool serials, string exchange, int defaultPoints, ImmutableArray<PointRule> points,
         ImmutableArray<MultiplierRule> multipliers, ImmutableArray<ExchangeCheck> checks, ImmutableArray<SectionList> sections,
-        string sectionType, ImmutableArray<CabrilloField> entryFields, ImmutableArray<CabrilloField> cabrilloFields)
+        string sectionType, ImmutableArray<CabrilloField> entryFields, ImmutableArray<CabrilloField> cabrilloFields, int dupeClause, string workable,
+        ImmutableDictionary<string, int> bandFactors, CountryIdentityKind countryIdentityKind)
     {
         Name = name; DisplayName = displayName; CabrilloName = cabrilloName; DefinitionId = fingerprint;
         _mode = mode; DupeScope = dupe; UsesSerialNumbers = serials; DefaultSentExchange = exchange;
         _defaultPoints = defaultPoints; _points = points; _multipliers = multipliers; _checks = checks;
         _sections = sections; _sectionType = sectionType; EntryFields = entryFields; CabrilloFields = cabrilloFields;
+        _dupeClause = dupeClause; _workable = workable;
+        _bandFactors = bandFactors; RequiredCountryIdentityKind = countryIdentityKind;
     }
 
     public ImmutableArray<ValidationIssue> Validate(Qso qso, StationInfo ownStation)
@@ -66,12 +73,26 @@ public sealed class UdcContestRules : IContestRules
                 _ => false
             }, check.Field, $"Invalid {check.Kind.ToLowerInvariant()} exchange '{value}'.");
         }
-        bool country = _points.Any(p => p.Priority == 1 || p.Selector == "MYCOUNTRY") || _multipliers.Any(m => m.Selector == "COUNTRYPREFIX");
-        bool continent = _points.Any(p => p.Selector is "SAMECONTINENT" or "OTHERCONTINENT" or "EU" or "AS" or "AF" or "NA" or "SA" or "OC" or "AN");
+        bool country = _points.Any(p => p.Priority == 1 || p.Selector == "MYCOUNTRY") || _multipliers.Any(m => m.Selector == "COUNTRYPREFIX" || !m.IncludeCountries.IsEmpty || !m.ExcludeCountriesOrContinents.IsEmpty)
+            || _workable is "MYCOUNTRYONLY" or "EXCEPTMYCOUNTRY" || _workable != "ANY" && !_workable.EndsWith("ONLY", StringComparison.Ordinal);
+        bool continent = _points.Any(p => p.Selector is "SAMECONTINENT" or "OTHERCONTINENT" or "EU" or "AS" or "AF" or "NA" or "SA" or "OC" or "AN")
+            || _multipliers.Any(m => m.ExcludeCountriesOrContinents.Any(ValidContinent)) || _workable is "MYCONTINENTONLY" or "NAONLY" or "SAONLY" or "EUONLY" or "ASIAONLY" or "AFONLY" or "OCONLY";
         Need(!country || (ownStation.CountryPrefix.Length != 0 && qso.Station.CountryPrefix.Length != 0), "CountryPrefix", "Country identities are required for these rules; supply them from the host country database.");
+        Need(!country || (ownStation.CountryIdentityKind == RequiredCountryIdentityKind && qso.Station.CountryIdentityKind == RequiredCountryIdentityKind),
+            "CountryIdentityKind", $"This definition requires {RequiredCountryIdentityKind} country identities supplied by the host.");
         Need(!continent || (ValidContinent(ownStation.Continent) && ValidContinent(qso.Station.Continent)), "Continent", "Valid own/correspondent continents are required for these points rules.");
+        Need(IsEligible(qso.Station, ownStation), "IsWorkable", "Station is not eligible under the contest's IsWorkable restriction.");
+        if (DupeScope != DupeScope.None)
+        {
+            if (_dupeClause is 1 or 2) Need(DupeExtra(qso).Length != 0, "DupeSqlString", "The additional dupe field cannot be empty.");
+            if (_dupeClause == 4) Need(Values.IsGrid(qso.Received.Grid), "Received.Grid", "The grid dupe key requires a valid 4- or 6-character locator.");
+        }
         foreach (var multiplier in _multipliers)
         {
+            if (!MultiplierGeographyApplies(multiplier, qso)) continue;
+            if (!multiplier.IncludeSections.IsEmpty)
+                Need(_sections.First(s => s.Type.Equals(_sectionType, StringComparison.OrdinalIgnoreCase)).Contains(RemoteSection(qso)), "Section", "Section filter requires a valid section from SEC.");
+            if (!MultiplierApplies(multiplier, qso)) continue;
             string key = MultiplierValue(multiplier.Selector, qso, ownStation, own: false);
             Need(key.Length != 0, "Multiplier" + multiplier.Group, $"Missing/invalid {multiplier.Selector} multiplier value.");
             if (multiplier.ExcludeOwn) Need(MultiplierValue(multiplier.Selector, qso, ownStation, own: true).Length != 0,
@@ -81,6 +102,31 @@ public sealed class UdcContestRules : IContestRules
     }
 
     private static bool ValidContinent(string value) => Values.Key(value) is "EU" or "AS" or "AF" or "NA" or "SA" or "OC" or "AN";
+    private static string RemoteSection(Qso qso) => qso.Received.Section.Length == 0 ? qso.Received.Value : qso.Received.Section;
+    private bool MultiplierApplies(MultiplierRule rule, Qso qso)
+        => MultiplierGeographyApplies(rule, qso)
+            && (rule.IncludeSections.IsEmpty || rule.IncludeSections.Contains(Values.Key(RemoteSection(qso))));
+    private static bool MultiplierGeographyApplies(MultiplierRule rule, Qso qso)
+    {
+        string country = Values.Key(qso.Station.CountryPrefix), continent = Values.Key(qso.Station.Continent);
+        return (rule.IncludeCountries.IsEmpty || rule.IncludeCountries.Contains(country))
+            && !rule.ExcludeCountriesOrContinents.Contains(country) && !rule.ExcludeCountriesOrContinents.Contains(continent);
+    }
+    private bool IsEligible(StationInfo station, StationInfo own) => _workable switch
+    {
+        "ANY" => true,
+        "MYCOUNTRYONLY" => Values.Key(station.CountryPrefix) == Values.Key(own.CountryPrefix),
+        "EXCEPTMYCOUNTRY" => Values.Key(station.CountryPrefix) != Values.Key(own.CountryPrefix),
+        "MYCONTINENTONLY" => Values.Key(station.Continent) == Values.Key(own.Continent),
+        "ASIAONLY" => Values.Key(station.Continent) == "AS",
+        "NAONLY" or "SAONLY" or "EUONLY" or "AFONLY" or "OCONLY" => Values.Key(station.Continent) == _workable[..2],
+        _ => UdcImporter.Split(_workable).Contains(Values.Key(station.CountryPrefix), StringComparer.Ordinal)
+    };
+    private string DupeExtra(Qso qso) => _dupeClause switch
+    {
+        1 => Values.Key(RemoteSection(qso)), 2 => Values.Key(qso.Received.Value), 3 => qso.Mode.ToString(),
+        4 => Values.Key(qso.Received.Grid), _ => ""
+    };
     internal static string Field(Exchange exchange, string name) => name.ToUpperInvariant() switch
     {
         "EXCHANGE1TEXT" => exchange.Value, "MISCTEXT" => exchange.Misc, "COMMENTTEXT" => exchange.Comment,
@@ -94,6 +140,7 @@ public sealed class UdcContestRules : IContestRules
         var rows = ImmutableArray.CreateBuilder<QsoEvaluation>();
         var dupes = new HashSet<string>(StringComparer.Ordinal);
         var mults = new HashSet<string>(StringComparer.Ordinal);
+        int scoringMultipliers = 0;
         var ids = new HashSet<Guid>();
         long points = 0;
         // Equal timestamps retain insertion order. Recomputing after edits/removals promotes the next valid QSO.
@@ -103,14 +150,15 @@ public sealed class UdcContestRules : IContestRules
             var issues = Validate(qso, ownStation);
             if (issues.Length != 0) throw new ArgumentException(string.Join("; ", issues.Select(i => i.Field + ": " + i.Message)), nameof(contacts));
             string dupeKey = Values.Key(qso.Station.Callsign) + (DupeScope == DupeScope.Contest ? "" : "|" + qso.Band)
-                + (DupeScope == DupeScope.BandAndMode ? "|" + qso.Mode : "");
+                + (DupeScope == DupeScope.BandAndMode ? "|" + qso.Mode : "") + "|" + DupeExtra(qso);
             bool duplicate = DupeScope != DupeScope.None && !dupes.Add(dupeKey);
             var credits = ImmutableArray.CreateBuilder<MultiplierCredit>();
-            int qsoPoints = duplicate ? 0 : ContactPoints(qso, ownStation);
+            int qsoPoints = duplicate ? 0 : checked(ContactPoints(qso, ownStation) * _bandFactors.GetValueOrDefault(qso.Band, 1));
             if (!duplicate)
             {
                 foreach (var rule in _multipliers)
                 {
+                    if (!MultiplierApplies(rule, qso)) continue;
                     string value = MultiplierValue(rule.Selector, qso, ownStation, own: false);
                     if (rule.ExcludeOwn && value == MultiplierValue(rule.Selector, qso, ownStation, own: true)) continue;
                     string scope = rule.Scope switch
@@ -118,13 +166,18 @@ public sealed class UdcContestRules : IContestRules
                         MultiplierScope.Band => qso.Band, MultiplierScope.Mode => qso.Mode.ToString(),
                         MultiplierScope.BandAndMode => qso.Band + "/" + qso.Mode, _ => ""
                     };
-                    if (mults.Add(rule.Group + "|" + scope + "|" + value)) credits.Add(new(rule.Group, value));
+                    if (mults.Add(rule.Group + "|" + scope + "|" + value))
+                    {
+                        credits.Add(new(rule.Group, value) { CountsForScore = rule.CountsForScore });
+                        if (rule.CountsForScore) scoringMultipliers++;
+                    }
                 }
             }
             points = checked(points + qsoPoints);
             rows.Add(new(qso, duplicate, qsoPoints, credits.ToImmutable()));
         }
-        return new(points, mults.Count, checked(points * (_multipliers.Length == 0 ? 1 : mults.Count)), rows.ToImmutable());
+        return new(points, mults.Count, checked(points * (_multipliers.All(m => !m.CountsForScore) ? 1 : scoringMultipliers)), rows.ToImmutable())
+            { ScoringMultipliers = scoringMultipliers };
     }
 
     private int ContactPoints(Qso qso, StationInfo ownStation)
@@ -161,6 +214,7 @@ public sealed class UdcContestRules : IContestRules
         return selector switch
         {
             "COUNTRYPREFIX" => Values.Key(station.CountryPrefix), "WPXPREFIX" => Values.Key(station.WpxPrefix),
+            "CALLSIGN" => Values.Key(station.Callsign), "FIRSTQSO" => "FIRST",
             "CQZONE" => Zone(own ? "" : qso.Received.Value, station.CqZone, 40)?.ToString(CultureInfo.InvariantCulture) ?? "",
             "IARUZONE" => Zone(own ? "" : qso.Received.Misc, station.ItuZone, 90)?.ToString(CultureInfo.InvariantCulture) ?? "",
             "SECTION" => _sections.First(s => s.Type.Equals(_sectionType, StringComparison.OrdinalIgnoreCase)).Canonical(section) ?? "",

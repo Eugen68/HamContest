@@ -23,6 +23,8 @@ jobs:
         run: dotnet test tests/HamContest.Tests -c Release --logger "console;verbosity=normal"
       - name: Example, persistence and Cabrillo smoke test
         run: dotnet run --project examples/HamContest.Example -c Release
+      - name: Original RTTYops UDC (pinned SHA-256, external reference)
+        run: dotnet run --project tools/HamContest.ReferenceCheck -c Release
       - name: NuGet package (no publication)
         run: dotnet pack src/HamContest -c Release -o artifacts
       - uses: actions/upload-artifact@v4

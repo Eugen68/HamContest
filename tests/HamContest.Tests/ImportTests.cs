@@ -18,11 +18,11 @@ public class ImportTests
     [InlineData("BonusPoints", "DL, +5")]
     [InlineData("UnknownRule", "True")]
     [InlineData("MultipleSessions", "0000/30")]
-    [InlineData("DupeSqlString", "1")]
+    [InlineData("DupeSqlString", "99")]
     [InlineData("QsoNumbersByBand", "1")]
     [InlineData("PointsPerContact", "Exchange, *")]
     [InlineData("PointsPerContact", "20m, 3, RTTY, 5")]
-    [InlineData("UsesWAECountries", "True")]
+    [InlineData("SetSentTimeForContact", "True")]
     [InlineData("NumMults", "banana")]
     [InlineData("Name", "VHFTEST")]
     public void UnsupportedOrInvalidRulesBlockScoring(string key, string value)

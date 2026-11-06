@@ -3,7 +3,7 @@
 Biblioteca .NET pentru jurnal si reguli de concurs radioamator, cu import de definitii
 N1MM Logger+ UDC/SEC. Independenta de WPF, audio, decodor si controlul statiei.
 
-**Prima versiune: 0.1.0-preview.1**, pentru .NET 8 si .NET 10, Windows/Linux.
+**Versiunea curenta: 0.1.0-preview.2**, pentru .NET 8 si .NET 10, Windows/Linux.
 Suportul UDC este un subset explicit, nu compatibilitate completa cu N1MM.
 Vezi [matricea de compatibilitate](docs/udc-support.md) inainte de folosirea unui fisier.
 
@@ -15,6 +15,9 @@ Vezi [matricea de compatibilitate](docs/udc-support.md) inainte de folosirea unu
 - Duble o data pe concurs, pe banda, pe banda/mod sau fara verificare.
 - Punctaj constant sau tabele simple pe banda, mod ori tara/continent.
 - Pana la trei grupe de multiplicatori, cu domeniu independent: banda, mod, banda/mod sau concurs.
+- Multiplicatori pe indicative unice sau primul QSO; filtre pe tari/continente/sectiuni si grupe doar pentru afisare.
+- Criterii suplimentare de dupe pe sectiune, schimb, mod sau locator si restrictii IsWorkable.
+- Factori de punctaj pe benzi si declararea explicita a identitatilor de tara DXCC/WAE.
 - Serial rezervat explicit, reutilizat la repetare; numerele abandonate sau sterse nu sunt reciclate.
 - Editare/stergere si recalcularea rezultatelor, inclusiv promovarea urmatorului QSO dupa stergerea unui dupe.
 - Snapshot JSON versionat, verificat fata de definitia concursului; salvare prin fisier temporar si inlocuire.
@@ -76,6 +79,10 @@ fisiere si nu depinde de o instalare N1MM. UDC/SEC pot fi decodate de gazda din 
 
 `IContestRules` permite si reguli native C#, independent de importator. `StationInfo` primeste
 din gazda identitatea tarii (prefixul principal CTY), continentul, zonele CQ/ITU si prefixul WPX.
+`UdcContestRules.RequiredCountryIdentityKind` indica daca definitia cere DXCC sau WAE.
+Gazda trebuie sa furnizeze identitati din acea lista si sa seteze `StationInfo.CountryIdentityKind`;
+biblioteca refuza folosirea datelor DXCC pentru reguli care cer WAE. Declararea tipului nu
+transforma sau verifica automat datele unei baze externe.
 HamCallsign poate furniza o parte din acestea; HamContest nu ghiceste tara dupa inceputul
 indicativului si nu are dependenta de HamRig sau HamCallsign.
 
@@ -116,10 +123,22 @@ dotnet pack src/HamContest -c Release -o artifacts
 GitHub Actions ruleaza testele pe Windows/Linux, executa exemplul si produce pachetul NuGet
 ca artefact. Pachetul nu este publicat automat pe NuGet.org.
 
+Verificarea separata a unei definitii reale nemodificate:
+
+```sh
+dotnet run --project tools/HamContest.ReferenceCheck -c Release
+```
+
+Aceasta comanda descarca UDC-ul RTTYops WW DX publicat de organizator, verifica SHA-256 si
+calculeaza un jurnal de sase QSO-uri cu rezultat asteptat 33 puncte × 3 multiplicatori = 99.
+Poate primi si calea locala a aceluiasi fisier. Testele unitare nu folosesc reteaua; pasul
+CI de referinta externa are nevoie de acces la site. Vezi [provenienta si limitele](docs/reference-validation.md).
+
 ## Compatibilitate
 
 Regulile sunt implementate independent dupa [documentatia UDC N1MM](https://n1mmwp.hamdocs.com/appendices/udc-editor/).
-Testele folosesc exemple originale si cazurile de comportament documentate. Compatibilitatea
+Testele folosesc exemple originale si cazurile de comportament documentate; verificarea externa
+incarca si o definitie originala, fara a o include in pachet. Compatibilitatea
 nu a fost inca verificata prin rularea aceluiasi jurnal intr-o instalare N1MM Logger+.
 Inainte de folosirea unui concurs real, trebuie comparate schimburile, dublele, punctele,
 multiplicatorii si exportul cu regulamentul organizatorului si un jurnal de referinta.
