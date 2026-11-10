@@ -180,6 +180,51 @@ public sealed class UdcContestRules : IContestRules
             { ScoringMultipliers = scoringMultipliers };
     }
 
+    /// <summary>
+    /// Evaluates a heard station before the exchange is known, against the logged contacts. Unlike
+    /// <see cref="Score"/>, it needs no exchange: dupes use callsign, band and mode per <see cref="DupeScope"/>;
+    /// multipliers are reported only when their value derives from <paramref name="station"/> alone.
+    /// </summary>
+    public StationPreview Preview(IEnumerable<Qso> contacts, StationInfo ownStation, StationInfo station, long frequencyHz, ContactMode mode)
+    {
+        ArgumentNullException.ThrowIfNull(contacts); ArgumentNullException.ThrowIfNull(ownStation); ArgumentNullException.ThrowIfNull(station);
+        var logged = contacts.ToList();
+        string band = Bands.FromFrequency(frequencyHz) ?? "";
+        string DupeKey(string call, string qsoBand, ContactMode qsoMode) => Values.Key(call)
+            + (DupeScope == DupeScope.Contest ? "" : "|" + qsoBand) + (DupeScope == DupeScope.BandAndMode ? "|" + qsoMode : "");
+        string candidateKey = DupeKey(station.Callsign, band, mode);
+        bool worked = DupeScope != DupeScope.None && logged.Any(q => DupeKey(q.Station.Callsign, q.Band, q.Mode) == candidateKey);
+
+        var news = ImmutableArray.CreateBuilder<MultiplierCredit>();
+        if (!worked)
+        {
+            // multipliers already credited, with the same keys as Score
+            var credited = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var row in Score(logged, ownStation).Contacts)
+                foreach (var credit in row.NewMultipliers)
+                    if (_multipliers.FirstOrDefault(m => m.Group == credit.Group) is { } owner)
+                        credited.Add(credit.Group + "|" + ScopeKey(owner.Scope, row.Qso.Band, row.Qso.Mode) + "|" + credit.Key);
+            var probe = new Qso { Time = DateTimeOffset.UtcNow, FrequencyHz = frequencyHz, Mode = mode, Station = station };
+            foreach (var rule in _multipliers)
+            {
+                if (rule.Selector is not ("COUNTRYPREFIX" or "WPXPREFIX" or "CALLSIGN" or "CQZONE" or "IARUZONE" or "FIRSTQSO")) continue;
+                if (!rule.IncludeSections.IsEmpty || !MultiplierGeographyApplies(rule, probe)) continue;
+                string value = MultiplierValue(rule.Selector, probe, ownStation, own: false);
+                if (value.Length == 0) continue;
+                if (rule.ExcludeOwn && value == MultiplierValue(rule.Selector, probe, ownStation, own: true)) continue;
+                if (credited.Add(rule.Group + "|" + ScopeKey(rule.Scope, band, mode) + "|" + value))
+                    news.Add(new(rule.Group, value) { CountsForScore = rule.CountsForScore });
+            }
+        }
+        return new StationPreview(worked, _dupeClause != 0, IsEligible(station, ownStation), news.ToImmutable());
+    }
+
+    private static string ScopeKey(MultiplierScope scope, string band, ContactMode mode) => scope switch
+    {
+        MultiplierScope.Band => band, MultiplierScope.Mode => mode.ToString(),
+        MultiplierScope.BandAndMode => band + "/" + mode, _ => ""
+    };
+
     private int ContactPoints(Qso qso, StationInfo ownStation)
     {
         // Explicit countries precede broader geographic clauses, as in the documented OH/SM example.

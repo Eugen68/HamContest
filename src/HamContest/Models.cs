@@ -66,6 +66,16 @@ public sealed record MultiplierCredit(int Group, string Key)
     public bool CountsForScore { get; init; } = true;
 }
 public sealed record QsoEvaluation(Qso Qso, bool IsDupe, int Points, ImmutableArray<MultiplierCredit> NewMultipliers);
+
+/// <summary>
+/// A heard station before its exchange is known (<see cref="Udc.UdcContestRules.Preview"/>), e.g. for
+/// coloring decoded callsigns. <see cref="IsWorked"/>: the callsign is already in the log within the dupe
+/// scope (band/mode). When <see cref="DupeNeedsExchange"/> is true the definition adds an exchange-based
+/// dupe criterion, so a worked station may still be a valid new contact. <see cref="NewMultipliers"/>
+/// lists only multipliers whose value comes from the station itself (country, WPX prefix, callsign,
+/// CQ/ITU zone from the country data, first QSO); exchange-based multipliers are known only after logging.
+/// </summary>
+public sealed record StationPreview(bool IsWorked, bool DupeNeedsExchange, bool IsWorkable, ImmutableArray<MultiplierCredit> NewMultipliers);
 public sealed record ContestScore(long QsoPoints, int Multipliers, long Total, ImmutableArray<QsoEvaluation> Contacts)
 {
     public int ScoringMultipliers { get; init; }
