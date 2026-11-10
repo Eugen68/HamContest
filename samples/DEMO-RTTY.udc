@@ -1,0 +1,24 @@
+; Original HamContest example, not an official contest definition.
+[Author]
+AuthorName=HamContest example
+[File]
+Revision=1.0
+Description=Demonstration of serial exchange and section multipliers
+[Contest]
+Name=DEMO-RTTY
+DisplayName=HamContest demonstration RTTY
+CabrilloName=DEMO-RTTY
+Mode=RTTY
+DupeType=2
+PointsPerContact=2
+NumMults=1
+Multiplier1Name=Sect
+MultSqlString=Section
+MultWindowType=DEMO
+IsMultPer=1
+DefaultContestExchange=001
+QsoErrorString=DEMO
+EntryWindowInfo=SNTText, 450, SntNrText, 625, RCVText, 450, RcvNrText, 625, Exchange1Text, 615
+CabrilloVersion=3.0
+CabrilloFormat=99
+CabrilloString=SNT, 3, SentNr, 3, CallSign, 13, RCV, 3, RcvNr, 3, Exchange1, 4
